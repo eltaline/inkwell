@@ -22,10 +22,10 @@ It pairs the things people love about Obsidian — wikilinks, backlinks, a graph
 docker run -d \
   -p 8080:8080 \
   -v /srv/inkwell/data:/data \
-  ghcr.io/<user>/inkwell:latest
+  ghcr.io/eltaline/inkwell:latest
 
 # or docker-compose
-curl -L https://raw.githubusercontent.com/<user>/inkwell/main/docker-compose.yml -o docker-compose.yml
+curl -L https://raw.githubusercontent.com/eltaline/inkwell/main/docker-compose.yml -o docker-compose.yml
 docker compose up -d
 ```
 
