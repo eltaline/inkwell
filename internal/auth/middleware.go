@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"github.com/eltaline/inkwell/internal/api"
 )
 
 type contextKey string
@@ -16,14 +18,14 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
 		if header == "" || !strings.HasPrefix(header, "Bearer ") {
-			http.Error(w, `{"error":"missing or invalid authorization header"}`, http.StatusUnauthorized)
+			api.WriteError(w, http.StatusUnauthorized, "missing or invalid authorization header")
 			return
 		}
 
 		tokenStr := strings.TrimPrefix(header, "Bearer ")
 		claims, err := s.ValidateToken(tokenStr)
 		if err != nil {
-			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusUnauthorized)
+			api.WriteError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
 

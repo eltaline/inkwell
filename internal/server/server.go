@@ -1,11 +1,14 @@
 package server
 
 import (
-	"encoding/json"
+	"log"
 	"net/http"
+	"os"
 
+	"github.com/eltaline/inkwell/internal/api"
 	"github.com/eltaline/inkwell/internal/auth"
 	"github.com/eltaline/inkwell/internal/config"
+	"github.com/eltaline/inkwell/internal/middleware"
 	"github.com/eltaline/inkwell/internal/user"
 	"github.com/eltaline/inkwell/internal/version"
 )
@@ -20,6 +23,15 @@ type Server struct {
 
 func New(cfg *config.Config, users *user.Store, authSvc *auth.Service) *Server {
 	mux := http.NewServeMux()
+
+	logger := log.New(os.Stdout, "", log.LstdFlags)
+
+	stack := middleware.Chain(
+		middleware.CORS(middleware.DefaultCORSConfig()),
+		middleware.Logging(logger),
+		middleware.Recovery(logger),
+	)
+
 	s := &Server{
 		cfg:   cfg,
 		mux:   mux,
@@ -27,7 +39,7 @@ func New(cfg *config.Config, users *user.Store, authSvc *auth.Service) *Server {
 		users: users,
 		server: &http.Server{
 			Addr:    cfg.Addr(),
-			Handler: mux,
+			Handler: stack(mux),
 		},
 	}
 	s.routes()
@@ -43,8 +55,7 @@ func (s *Server) routes() {
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	api.WriteJSON(w, http.StatusOK, map[string]string{
 		"version":    version.Version,
 		"commit":     version.Commit,
 		"build_date": version.BuildDate,
@@ -59,8 +70,8 @@ type registerRequest struct {
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	if err := api.DecodeJSON(r, &req); err != nil {
+		api.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -73,11 +84,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		case user.ErrInvalidEmail, user.ErrWeakPassword, user.ErrEmptyUsername:
 			status = http.StatusBadRequest
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		api.WriteError(w, status, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]string{"token": token})
+	api.WriteJSON(w, http.StatusCreated, map[string]string{"token": token})
 }
 
 type loginRequest struct {
@@ -87,50 +98,49 @@ type loginRequest struct {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	if err := api.DecodeJSON(r, &req); err != nil {
+		api.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	token, err := s.auth.Login(req.Username, req.Password)
 	if err != nil {
-		status := http.StatusUnauthorized
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		api.WriteError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+	api.WriteJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	tokenStr := auth.ExtractBearerToken(r)
 	if tokenStr == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing authorization header"})
+		api.WriteError(w, http.StatusBadRequest, "missing authorization header")
 		return
 	}
 
 	if err := s.auth.Logout(tokenStr); err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		api.WriteError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+	api.WriteJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		api.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	u, err := s.users.GetByID(claims.UserID)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		api.WriteError(w, http.StatusNotFound, "user not found")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"id":         u.ID,
 		"username":   u.Username,
 		"email":      u.Email,
@@ -138,10 +148,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+// Handler returns the server's root HTTP handler (with middleware applied).
+func (s *Server) Handler() http.Handler {
+	return s.server.Handler
 }
 
 func (s *Server) ListenAndServe() error {

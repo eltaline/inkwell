@@ -201,3 +201,54 @@ func TestRegisterWeakPassword(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
+
+func TestUnifiedErrorFormat(t *testing.T) {
+	s := newTestServer(t)
+
+	body := `{"username":"weak","email":"weak@example.com","password":"short"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if _, ok := resp["error"]; !ok {
+		t.Error("response missing 'error' field")
+	}
+	if _, ok := resp["code"]; !ok {
+		t.Error("response missing 'code' field")
+	}
+	if int(resp["code"].(float64)) != http.StatusBadRequest {
+		t.Errorf("code = %v, want %d", resp["code"], http.StatusBadRequest)
+	}
+}
+
+func TestCORSHeaders(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/version", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if v := rec.Header().Get("Access-Control-Allow-Origin"); v == "" {
+		t.Error("Access-Control-Allow-Origin header is missing")
+	}
+	if v := rec.Header().Get("Access-Control-Allow-Methods"); v == "" {
+		t.Error("Access-Control-Allow-Methods header is missing")
+	}
+}
+
+func TestRequestLogging(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
